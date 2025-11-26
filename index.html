@@ -1,0 +1,141 @@
+<!-- templates/index.html -->
+<!doctype html>
+<html>
+<head>
+  <meta charset="utf-8" />
+  <title>WEKA Web UI</title>
+  <style>
+    body { font-family: Arial, sans-serif; margin: 20px; }
+    textarea { width: 100%; height: 320px; }
+    pre { background:#f5f5f5; padding:10px; border-radius:4px; overflow:auto; }
+    .col { display:inline-block; vertical-align:top; width:48%; margin-right:2%;}
+    .row { margin-bottom:16px; }
+  </style>
+</head>
+<body>
+  <h2>WEKA Web Interface</h2>
+
+  <div class="row">
+    <strong>Upload dataset (.arff or .csv):</strong><br>
+    <input id="fileInput" type="file" accept=".arff,.csv" />
+    <button onclick="upload()">Upload</button>
+  </div>
+
+  <div class="row">
+    <strong>Dataset files on server:</strong><br>
+    <select id="fileList">
+      <option value="">-- select file --</option>
+      <!-- options populated by server -->
+    </select>
+    <button onclick="loadData()">Load</button>
+    <button onclick="runJ48()">Run J48 (show tree)</button>
+    <button onclick="download()">Download</button>
+  </div>
+
+  <div class="row">
+    <div class="col">
+      <h3>Dataset content</h3>
+      <pre id="dataView">No file loaded.</pre>
+    </div>
+    <div class="col">
+      <h3>J48 output (tree + eval)</h3>
+      <pre id="j48View">No output yet.</pre>
+    </div>
+  </div>
+
+<script>
+async function refreshFileList() {
+  const resp = await fetch("/");
+  const text = await resp.text();
+  // crude parsing: server renders select options server-side; but when loaded fresh, we simply re-request via API below
+  // Instead call dedicated endpoint? We'll request /list-files instead (create if needed)
+  // Simple approach: call /load-data?file=.. not ideal.
+  // We'll implement dedicated endpoint call using a JSON fetch:
+  try {
+    const listResp = await fetch("/files-list");
+    if (listResp.ok) {
+      const json = await listResp.json();
+      const sel = document.getElementById("fileList");
+      sel.innerHTML = '<option value="">-- select file --</option>';
+      json.files.forEach(f => {
+        const o = document.createElement("option");
+        o.value = f;
+        o.text = f;
+        sel.appendChild(o);
+      });
+    }
+  } catch (e) {
+    console.warn(e);
+  }
+}
+
+async function upload() {
+  const fi = document.getElementById("fileInput");
+  if (!fi.files.length) { alert("Select a file"); return; }
+  const fd = new FormData();
+  fd.append("file", fi.files[0]);
+  const res = await fetch("/upload", { method: "POST", body: fd });
+  const j = await res.json();
+  if (j.ok) {
+    alert("Uploaded: " + j.filename);
+    await refreshFileList();
+  } else {
+    alert("Upload failed");
+  }
+}
+
+async function loadData() {
+  const sel = document.getElementById("fileList");
+  const file = sel.value;
+  if (!file) { alert("Choose file"); return; }
+  const res = await fetch("/load-data?file=" + encodeURIComponent(file));
+  if (res.ok) {
+    const txt = await res.text();
+    document.getElementById("dataView").textContent = txt;
+  } else {
+    const txt = await res.text();
+    alert("Error: " + txt);
+  }
+}
+
+async function runJ48() {
+  const sel = document.getElementById("fileList");
+  const file = sel.value;
+  if (!file) { alert("Choose file"); return; }
+  const body = { file: file, classIndex: "last", unpruned: false, verbose: true };
+  const res = await fetch("/run-j48", {
+    method: "POST",
+    headers: {"Content-Type":"application/json"},
+    body: JSON.stringify(body)
+  });
+  const json = await res.json();
+  if (json.stdout !== undefined) {
+    document.getElementById("j48View").textContent = json.stdout + (json.stderr ? ("\n--- stderr ---\n"+json.stderr) : "");
+  } else {
+    document.getElementById("j48View").textContent = "Error: " + JSON.stringify(json);
+  }
+}
+
+async function download() {
+  const sel = document.getElementById("fileList");
+  const file = sel.value;
+  if (!file) { alert("Choose file"); return; }
+  window.location = "/download/" + encodeURIComponent(file);
+}
+
+window.addEventListener("load", () => {
+  // populate file list by calling dedicated endpoint
+  fetch("/files-list").then(r=>r.json()).then(j=>{
+    const sel = document.getElementById("fileList");
+    sel.innerHTML = '<option value="">-- select file --</option>';
+    j.files.forEach(f => {
+      const o = document.createElement("option");
+      o.value = f; o.text = f;
+      sel.appendChild(o);
+    });
+  }).catch(()=>{});
+});
+</script>
+
+</body>
+</html>
